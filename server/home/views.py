@@ -8,9 +8,11 @@ from django.shortcuts import render, HttpResponse
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.authentication import TokenAuthentication
+import math
+from home.models import *
 
 def index(request):
-    return HttpResponse('Working Fine')
+    return HttpResponse('Server Running')
 
 
 
@@ -55,22 +57,41 @@ def test(request):
 def location_view(request):
     lat = request.data.get('latitude')
     lon = request.data.get('longitude')
-    
-    # Get the username of the authenticated user
     username = request.user.first_name
-    print(username)
-    # Here you can add your logic to handle the location data
-    # For example, checking if the location is valid or not
-    if lat is not None and lon is not None:
-        # You can check the coordinates against registered ones
-        if is_within_registered_area(lat, lon):
-            return JsonResponse({'message': 'Location is valid.', 'username': username}, status=200)
-        else:
-            return JsonResponse({'message': 'You are out of the registered location.', 'username': username}, status=400)
+    user = request.user
 
-    return JsonResponse({'message': 'Invalid location data.', 'username': username}, status=400)
+    
+    if lat is None and lon is None:
+        return JsonResponse({'message': 'Invalid location data.', 'username': username}, status=400)
+    
+    lat, lon = float(lat), float(lon)
+    if is_within_registered_area(lat, lon, user):
+        return JsonResponse({'message': 'Location is valid.', 'username': username}, status=200)
+    else:
+        return JsonResponse({'message': 'You are out of the registered location.', 'username': username}, status=400)
 
-def is_within_registered_area(lat, lon):
-    # Implement your logic to verify if the lat/lon is within the registered area
-    # For example, checking against a predefined boundary or database entries
-    return False  # Replace with actual validation
+
+
+def is_within_registered_area(user_lat, user_lon, user):
+    temp = Add_Project_User.objects.get(user=user)
+    project = Project.objects.get(name = temp.project_name)
+
+    project_lat, project_lon, project_radius = float(project.lat), float(project.lon), float(project.radious)
+
+    if project_lat is not None and project_lon is not None and project_radius is not None:
+        distance = haversine(user_lat, user_lon, project_lat, project_lon)
+        print(distance)
+        if distance <= project_radius:
+            return True
+    return False  
+
+
+def haversine(lat1, lon1, lat2, lon2):
+    # Haversine formula to calculate the distance between two lat/lon points in kilometers
+    R = 6371  # Earth radius in kilometers
+    d_lat = math.radians(lat2 - lat1)
+    d_lon = math.radians(lon2 - lon1)
+    a = (math.sin(d_lat / 2) ** 2 +
+         math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(d_lon / 2) ** 2)
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c

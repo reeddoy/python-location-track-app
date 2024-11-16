@@ -1,18 +1,19 @@
-import kivy
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
 from kivy.uix.button import Button
 from kivy.uix.textinput import TextInput
 from kivy.uix.screenmanager import ScreenManager, Screen
+from plyer import gps
 import requests
 import threading
 import time
-import random
 import os
 import uuid
 import platform
 from datetime import datetime
+import random
+from android.permissions import request_permissions, Permission
 
 kivy.require('2.0.0')
 
@@ -37,9 +38,8 @@ class LoginScreen(Screen):
     def login(self, instance):
         username = self.username_input.text
         password = self.password_input.text
-        device_id = self.get_device_id()  # Get the device ID
+        device_id = self.get_device_id()
 
-        # Send login request
         response = requests.post('http://127.0.0.1:8000/login/', json={
             'username': username,
             'password': password,
@@ -48,10 +48,10 @@ class LoginScreen(Screen):
 
         if response.status_code == 200:
             data = response.json()
-            self.token = data['token']  # Store the token
+            self.token = data['token']
             self.message_label.text = 'Login successful!'
             self.manager.current = 'dashboard'
-            self.manager.get_screen('dashboard').set_username(username, self.token)  # Pass the token
+            self.manager.get_screen('dashboard').set_username(username, self.token)
         else:
             self.message_label.text = 'Login failed!'
 
@@ -69,7 +69,6 @@ class LoginScreen(Screen):
         else:
             with open(file_path, 'r') as f:
                 return f.read().strip()
-
 
 class DashboardScreen(Screen):
     def __init__(self, **kwargs):
@@ -93,33 +92,54 @@ class DashboardScreen(Screen):
         self.add_widget(self.layout)
 
         self.token = None
-        self.is_running = False  # Flag to check if location tracking is active
-        self.last_update_time = 0  # Track last update time
+        self.is_running = False
+        self.last_update_time = 0
 
     def set_username(self, username, token):
         self.welcome_label.text = f'Welcome, {username}!'
-        self.token = token  # Store the token for use in sending location
+        self.token = token
 
     def start_location_tracking(self, instance):
         if self.is_running:
-            return  # Do nothing if already running
+            return
 
-        self.is_running = True  # Set the flag to indicate tracking is active
-        self.start_button.disabled = True  # Disable the button after starting tracking
-        threading.Thread(target=self.track_location, daemon=True).start()  # Start tracking in a new thread
+        # Request necessary permissions for GPS, file access, and internet
+        request_permissions([Permission.ACCESS_FINE_LOCATION, Permission.ACCESS_COARSE_LOCATION, 
+                             Permission.READ_EXTERNAL_STORAGE, Permission.WRITE_EXTERNAL_STORAGE,
+                             Permission.INTERNET])
+
+        self.is_running = True
+        self.start_button.disabled = True
+
+        if platform == 'android':
+            gps.configure(on_location=self.on_gps_location, on_status=self.on_gps_status)
+            gps.start(minTime=10000, minDistance=0)  # 10 seconds update interval, 0 meters
+        else:
+            threading.Thread(target=self.track_location, daemon=True).start()
+
+    def on_gps_location(self, **kwargs):
+        lat = kwargs.get('lat')
+        lon = kwargs.get('lon')
+        if lat is not None and lon is not None:
+            self.send_location(lat, lon)
+
+    def on_gps_status(self, stype, status):
+        if stype == 'provider-enabled' and status == 'gps':
+            self.response_label.text = 'GPS enabled and tracking location...'
+        elif stype == 'provider-disabled' and status == 'gps':
+            self.response_label.text = 'GPS disabled. Please enable GPS.'
 
     def track_location(self):
         while self.is_running:
             current_time = time.time()
-            # Only send location if 10 seconds have passed
             if current_time - self.last_update_time >= 10:
-                lat = random.uniform(-90, 90)  # Example random latitude
-                lon = random.uniform(-180, 180)  # Example random longitude
+                lat = random.uniform(-90, 90)
+                lon = random.uniform(-180, 180)
                 self.send_location(lat, lon)
-                self.last_update_time = current_time  # Update the last update time
+                self.last_update_time = current_time
 
             self.countdown_label.text = f"Next update in: {10 - int(current_time - self.last_update_time)} seconds"
-            time.sleep(1)  # Sleep for 1 second
+            time.sleep(1)
 
     def send_location(self, lat, lon):
         headers = {'Authorization': f'Token {self.token}'}
@@ -130,16 +150,16 @@ class DashboardScreen(Screen):
 
         if response.status_code == 200:
             self.response_label.color = (0, 1, 0, 1)
-            self.response_label.text = f"Location is successfully verified at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}."
+            self.response_label.text = f"Location verified at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}."
         else:
-            self.response_label.color, self.response_label.text = (1, 0, 0, 1), f"Failed to verify location at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}."
+            self.response_label.color = (1, 0, 0, 1)
+            self.response_label.text = f"Failed to verify location at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}."
 
     def close_app(self, instance):
-        self.is_running = False  # Stop the tracking
+        self.is_running = False
         self.start_button.disabled = False
         self.response_label.text = ''
-        self.countdown_label.text = ''  # Clear countdown label when closing
-
+        self.countdown_label.text = ''
 
 class MyApp(App):
     def build(self):
@@ -147,7 +167,6 @@ class MyApp(App):
         sm.add_widget(LoginScreen(name='login'))
         sm.add_widget(DashboardScreen(name='dashboard'))
         return sm
-
 
 if __name__ == '__main__':
     MyApp().run()
